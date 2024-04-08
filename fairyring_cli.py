@@ -62,6 +62,8 @@ class FairyringCLI:
 
     async def subscribe_to_encrypted_tx(self, tx_hash):
         target_height = None
+        creator = None
+        index = None
         query_url = f"{self.rpc_url}/tx?hash=0x{tx_hash}"
         response = requests.get(query_url)
         if response.status_code == 200:
@@ -74,7 +76,12 @@ class FairyringCLI:
                             if attr["key"] == "target-height":
                                 target_height = attr["value"]
                                 print(f"Target height: {target_height}")
-                                break
+                            elif attr["key"] == "creator":
+                                creator = attr["value"]
+                                print(f"creator: {creator}")
+                            elif attr["key"] == "index":
+                                index = attr["value"]
+                                print(f"index: {index}")
                         break
             else:
                 print(f"Transaction failed with code {tx_result['code']}")
@@ -84,19 +91,16 @@ class FairyringCLI:
         if target_height is not None:
             async with websockets.connect(self.websocket_url) as websocket:
                 query = {"jsonrpc": "2.0", "method": "subscribe",
-                         "params": ["tm.event='NewBlock'"], "id": 1}
+                         "params": [
+                             "tm.event='NewBlock' AND executed-encrypted-tx.target-height='{}' AND executed-encrypted-tx.creator='{}' AND executed-encrypted-tx.index='{}'".format(
+                                 target_height, creator, index)], "id": 1}
                 await websocket.send(json.dumps(query))
                 async for message in websocket:
                     data = json.loads(message)
                     if data["result"] != {}:
-                        current_height = int(data["result"]["data"]["value"]["block"]["header"]["height"])
-                        if current_height > int(target_height):
-                            print("The encrypted transaction has already been executed.")
-                            break
-                        elif current_height == int(target_height):
-                            alert_message = "The encrypted transaction is executed now."
-                            requests.post(self.slack_webhook_url, json={'text': alert_message})
-                            break
+                        alert_message = "The encrypted transaction is executed now."
+                        requests.post(self.slack_webhook_url, json={'text': alert_message})
+                        break
         else:
             print("It is not an encrypted transaction")
 
@@ -107,7 +111,7 @@ class FairyringCLI:
         subparsers.add_parser('subscribe_aggregated_key', help='Subscribe to aggregated key events')
 
         transfer_parser = subparsers.add_parser('subscribe_transfer',
-                                                help='Subscribe to transfer events for an address and amount')
+                                                help='Subscribe to transfer events for an address and minimum amount')
         transfer_parser.add_argument('address', help='Address to monitor')
         transfer_parser.add_argument('amount', type=int, help='Minimum amount to trigger an alert, unit: ufairy')
 
